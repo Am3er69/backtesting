@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Forex Signal Studio — Connected</title>
+<style>
+:root{--bg:#071126;--panel:#0f2340;--muted:#9fb0c8;--accent:#3cbefc;--good:#27ae60;--bad:#e74c3c;--gold:#d4af37}
+*{box-sizing:border-box}body{margin:0;font-family:Inter,Arial;background:linear-gradient(180deg,#03051a,#071126);color:#e6f0fa}
+.header-fixed{position:fixed;top:0;left:0;right:0;z-index:999;background:linear-gradient(90deg,rgba(3,5,10,0.9),rgba(7,17,38,0.9));padding:10px 16px;display:flex;align-items:center;justify-content:space-between}
+h1{margin:0;font-size:16px;color:var(--accent)}
+.controls button{background:var(--accent);color:#04202a;border:none;padding:8px 12px;border-radius:8px;cursor:pointer}
+.wrap{padding:86px 16px 24px;display:flex;gap:16px;flex-wrap:wrap}
+.panel{background:var(--panel);border-radius:10px;padding:12px;box-shadow:0 6px 20px rgba(2,8,23,0.6);border:1px solid rgba(255,255,255,0.02)}
+.panel.small{width:340px}.panel.big{flex:1 1 760px;min-width:320px}
+.small-muted{font-size:12px;color:var(--muted)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px;margin-top:12px}
+.signal-card{border-radius:10px;padding:12px;background:linear-gradient(180deg, rgba(255,255,255,0.02), transparent);border:1px solid rgba(255,255,255,0.03)}
+.chip{padding:4px 8px;border-radius:999px;background:rgba(255,255,255,0.02);font-weight:700}
+.conf-bar{height:8px;background:rgba(255,255,255,0.04);border-radius:6px;overflow:hidden;margin-top:8px}
+.conf-fill{height:100%;background:linear-gradient(90deg,var(--bad),#ffd24d,var(--gold));width:0%;transition:width 600ms ease}
+.footer{padding:12px;color:var(--muted);text-align:center;border-top:1px solid rgba(255,255,255,0.03);margin-top:12px}
+.btn-ghost{background:transparent;border:1px solid rgba(255,255,255,0.04);padding:6px 8px;border-radius:6px;color:var(--muted)}
+</style>
+</head>
+<body>
+  <div class="header-fixed">
+    <div><h1>Forex Signal Studio — Connected</h1><div class="small-muted" id="desc">Scalp • Intraday • Swing — backend powered</div></div>
+    <div class="controls">
+      <button id="refreshBtn">🔄 Refresh</button>
+      <button class="btn-ghost" onclick="openTracker()">Tracker</button>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <div class="panel small">
+      <div><strong>Settings</strong></div>
+      <div class="small-muted">Confidence threshold (server enforces 65%)</div>
+      <div style="margin-top:8px;">
+        <label class="small-muted">Account (USD)</label><br>
+        <input id="accountBalance" type="number" value="1000" style="width:100%;padding:8px;border-radius:6px;background:transparent;color:#e6f0fa;border:1px solid rgba(255,255,255,0.05)"/>
+      </div>
+      <div style="margin-top:8px;">
+        <label class="small-muted">Risk % per trade</label><br>
+        <input id="riskPercent" type="number" value="1" step="0.1" style="width:100%;padding:8px;border-radius:6px;background:transparent;color:#e6f0fa;border:1px solid rgba(255,255,255,0.05)"/>
+      </div>
+      <div style="margin-top:12px" class="small-muted">Backtest is automatic on the server for signals ≥ 65%.</div>
+    </div>
+
+    <div class="panel big">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div><strong>Signals — server-side</strong><div class="small-muted">Only signals >= 65% are shown</div></div>
+        <div class="small-muted" id="lastUpdated">—</div>
+      </div>
+
+      <div id="signalsContainer" class="grid"></div>
+      <div id="backtestSummary" class="small-muted" style="margin-top:12px"></div>
+    </div>
+  </div>
+
+  <div id="trackerModal" style="display:none;position:fixed;inset:8% 6% 8% 6%;background:var(--panel);border-radius:8px;padding:12px;z-index:9999;overflow:auto">
+    <div style="display:flex;justify-content:space-between;align-items:center"><strong>Trade Tracker (local)</strong><div><button class="btn-ghost" onclick="closeTracker()">Close</button></div></div>
+    <div id="trackerList" style="margin-top:12px"></div>
+  </div>
+
+  <footer class="footer">Frontend only displays server results — keeps your TwelveData free tier intact.</footer>
+
+<script>
+const BACKEND_BASE = ''; // blank -> same origin (served by backend at http://localhost:3000)
+const SIGNALS_ENDPOINT = BACKEND_BASE + '/api/signals';
+const TAKE_ENDPOINT = BACKEND_BASE + '/api/trade/taken';
+const RESOLVE_ENDPOINT = BACKEND_BASE + '/api/trade/resolve';
+const LEARNER_ENDPOINT = BACKEND_BASE + '/api/learner';
+
+const PAIRS = ["EUR/USD","GBP/USD","USD/JPY","AUD/USD","USD/CAD","EUR/JPY","GBP/JPY","EUR/GBP","GBP/AUD","XAU/USD"];
+
+document.getElementById('refreshBtn').addEventListener('click', manualRefresh);
+
+function sleep(ms){ return new Promise(r=>setTimeout(r, ms)); }
+function formatPrice(v, pair){ const dec = (pair.includes('JPY')||pair==='XAU/USD')?2:5; return parseFloat(v).toFixed(dec); }
+
+async function fetchSignals(){
+  const account = +document.getElementById('accountBalance').value || 1000;
+  const risk = +document.getElementById('riskPercent').value || 1;
+  const q = new URLSearchParams({
+    pairs: JSON.stringify(PAIRS),
+    interval: '1h',
+    backtest: 'true',
+    account: String(account),
+    risk: String(risk),
+    slmul: '1.0',
+    maxsl: '50'
+  });
+  const url = SIGNALS_ENDPOINT + '?' + q.toString();
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const j = await res.json();
+    return j;
+  } catch (e){
+    console.error('fetchSignals error', e);
+    return null;
+  }
+}
+
+function renderCard(sig){
+  const s = sig;
+  const sideColor = s.candidate === 'BUY' ? '#27ae60' : '#e74c3c';
+  const conf = s.combinedConfidence || s.internalConfidence || 60;
+  const html = document.createElement('div');
+  html.className = 'signal-card';
+  html.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <div><strong>${s.pair}</strong> <span class="chip">${s.candidate}</span></div>
+      <div style="text-align:right">
+        <div style="font-weight:700;color:${sideColor}">${s.candidate}</div>
+        <div class="small-muted" style="font-size:12px">Conf: ${conf}%</div>
+      </div>
+    </div>
+    <div class="small-muted" style="margin-top:8px">Entry: ${formatPrice(s.entry,s.pair)}</div>
+    <div class="meta" style="margin-top:8px;display:flex;gap:10px;flex-wrap:wrap">
+      <div>SL: <strong>${formatPrice(s.slPrice,s.pair)}</strong> (${s.slPips} pips)</div>
+      <div>TP: <strong>${formatPrice(s.tpPrice,s.pair)}</strong> (${s.tpPips} pips)</div>
+      <div>Lots: <strong>${s.lots}</strong></div>
+    </div>
+    <div style="margin-top:8px" class="small-muted">ATR:${(s.atr||0).toFixed((s.pair.includes('JPY')||s.pair==='XAU/USD')?2:5)}  RSI:${Math.round(s.rsi||0)}  Pattern:${s.pattern||'—'}</div>
+    <div class="conf-bar"><div class="conf-fill" style="width:${conf}%"></div></div>
+    <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
+      <button onclick='markTaken(${JSON.stringify({pair:s.pair,candidate:s.candidate,entry:+s.entry,sl:+s.slPrice,tp:+s.tpPrice,slPips:s.slPips,tpPips:s.tpPips,lots:s.lots})})'>✅ Mark Taken</button>
+      <button class="btn-ghost" onclick='runBacktest("${s.pair}")'>🧪 Backtest</button>
+    </div>
+  `;
+  return html;
+}
+
+async function manualRefresh(){
+  document.getElementById('refreshBtn').disabled = true;
+  document.getElementById('refreshBtn').textContent = '⏳ Fetching...';
+  await refreshAllSignals();
+  document.getElementById('refreshBtn').disabled = false;
+  document.getElementById('refreshBtn').textContent = '🔄 Refresh';
+}
+
+async function refreshAllSignals(){
+  const container = document.getElementById('signalsContainer');
+  container.innerHTML = '<div class="small-muted">Fetching signals from server...</div>';
+  const j = await fetchSignals();
+  if (!j || !j.results){
+    container.innerHTML = '<div class="small-muted">Server error or no signals (check backend console)</div>';
+    return;
+  }
+  container.innerHTML = '';
+  if (j.results.length === 0){
+    container.innerHTML = '<div class="small-muted">No signals above threshold right now.</div>';
+  } else {
+    for (const sig of j.results){
+      container.appendChild(renderCard(sig));
+      await sleep(80);
+    }
+  }
+  document.getElementById('lastUpdated').textContent = 'Last updated: ' + new Date().toLocaleString();
+  document.getElementById('backtestSummary').textContent = `Returned ${j.meta.returned} signals`;
+  document.querySelectorAll('.conf-fill').forEach(e=>{ const w=e.style.width; e.style.width='0%'; setTimeout(()=>e.style.width=w,50); });
+}
+
+/* tracker */
+function loadTracker(){ return JSON.parse(localStorage.getItem('fx_tracker_v3')||'[]'); }
+function saveTracker(t){ localStorage.setItem('fx_tracker_v3', JSON.stringify(t)); }
+function markTaken(obj){
+  const t = loadTracker();
+  const rec = { pair: obj.pair, side: obj.candidate||obj.side, entry:+obj.entry, sl:+obj.sl, tp:+obj.tp, lots:obj.lots||0.01, takenAt: new Date().toISOString(), resolved:false };
+  t.push(rec); saveTracker(t);
+  // also inform server (async)
+  fetch(TAKE_ENDPOINT, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(rec)}).catch(()=>{});
+  alert('Saved trade locally and to backend.');
+}
+function openTracker(){
+  const list = loadTracker();
+  const c = document.getElementById('trackerList');
+  if (!c) return;
+  if (list.length === 0) c.innerHTML = '<div class="small-muted">No tracked trades yet.</div>';
+  else c.innerHTML = list.map((t,idx)=>`<div style="padding:8px;border-bottom:1px solid rgba(255,255,255,0.03)"><strong>${t.pair}</strong> - ${t.side} - Taken: ${new Date(t.takenAt).toLocaleString()}<br>Entry:${t.entry} SL:${t.sl} TP:${t.tp}<br><button onclick="resolveLocal(${idx})">Resolve</button></div>`).join('');
+  document.getElementById('trackerModal').style.display = 'block';
+}
+function closeTracker(){ document.getElementById('trackerModal').style.display = 'none'; }
+function resolveLocal(idx){
+  const list = loadTracker();
+  const r = prompt('Enter result: win or loss');
+  if (!r) return;
+  const pips = prompt('Enter pips (positive number)');
+  if (isNaN(pips)) return alert('Invalid pips');
+  list[idx].resolved = true;
+  list[idx].result = r.toLowerCase().startsWith('w') ? 'win' : 'loss';
+  list[idx].pips = +pips;
+  list[idx].resolvedAt = new Date().toISOString();
+  saveTracker(list);
+  // notify server
+  fetch(RESOLVE_ENDPOINT, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({pair:list[idx].pair, result:list[idx].result, pips:+pips})}).catch(()=>{});
+  alert('Saved resolution.');
+  openTracker();
+}
+
+/* Optional manual run-backtest button (requests backend to run for single pair) */
+async function runBacktest(pair){
+  // call backend endpoint by fetching current signals (backend already caches BTs automatically).
+  alert('Backtest is performed automatically on server for high-confidence pairs. Use server logs or /api/status.');
+}
+
+/* init */
+(async ()=>{ await refreshAllSignals(); })();
+</script>
+</body>
+</html>
