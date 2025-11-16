@@ -1,14 +1,24 @@
 // app.js
-const { runBacktest } = require('./backtest');
-const apiKey = '318e2543fba14c57836adc5ce228ee7e'; // your API key
+// Calls your deployed backend and prints the signal
+
+const axios = require("axios");
+
+// CHANGE THIS TO YOUR RENDER URL
+const BACKEND_URL = "https://backtesting-vlun.onrender.com/backtest";
 
 async function main() {
-  console.log('🚀 Starting backtest...');
-  const result = await runBacktest(apiKey);
+    try {
+        console.log("🚀 Fetching live signal...");
 
-  if (result) {
-    console.log(`Backtest Result: Wins=${result.wins}, Losses=${result.losses}`);
-  }
+        const symbol = "XAU/USD"; // default pair
+        const response = await axios.get(`${BACKEND_URL}?symbol=${symbol}`);
+
+        console.log("📡 Signal Response:");
+        console.log(response.data);
+
+    } catch (err) {
+        console.log("❌ Error fetching signal:", err.message);
+    }
 }
 
 main();
