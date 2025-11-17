@@ -1,4 +1,4 @@
-// server.js
+// index.js
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
@@ -14,11 +14,11 @@ app.get("/", (req, res) => {
     res.send("AI Backend is Running ✔");
 });
 
-// 🟡 GENERATE SIGNALS ENDPOINT (this fixes your frontend)
+// 🟡 GENERATE SIGNALS ENDPOINT
 app.get("/signals", async (req, res) => {
     try {
-        const symbol = "XAU/USD";      // default symbol for gold
-        const timeframe = "1h";        // you can later make this dynamic
+        const symbol = "XAU/USD";
+        const timeframe = "1h";
         const limit = 200;
 
         const candles = await fetchCandles(symbol, timeframe, limit);
@@ -30,10 +30,9 @@ app.get("/signals", async (req, res) => {
             });
         }
 
-        // Run your existing backtest logic
+        // Run backtest
         const result = runBacktest(candles);
 
-        // Build a signal object that matches frontend format
         const lastClose = candles[candles.length - 1].close;
         const confidence =
             ((result.wins / (result.wins + result.losses)) * 100).toFixed(2);
@@ -65,7 +64,49 @@ app.get("/signals", async (req, res) => {
     }
 });
 
-// 🟣 START SERVER (Render uses process.env.PORT)
+// ----------------------------------------------------
+// 🔥 RATE-LIMIT SAFE FETCH SYSTEM
+// ----------------------------------------------------
+
+// List of symbols your backend rotates through
+const symbols = [
+    "XAU/USD",
+    "EUR/USD",
+    "GBP/USD",
+    "USD/JPY",
+    "BTC/USD",
+    "ETH/USD"
+];
+
+// Safely rotate symbols to stay inside API limits
+let symbolIndex = 0;
+
+async function safeFetchLoop() {
+    try {
+        const symbol = symbols[symbolIndex];
+
+        console.log(`⏳ Fetching: ${symbol}`);
+        const candles = await fetchCandles(symbol, "1h", 100);
+
+        if (!candles || candles.length === 0) {
+            console.log(`⚠ No candle data for ${symbol}`);
+        } else {
+            console.log(`📊 Candle data OK for ${symbol}`);
+        }
+
+        symbolIndex = (symbolIndex + 1) % symbols.length;
+
+    } catch (err) {
+        console.log("Fetch loop error:", err);
+    }
+}
+
+// Fetch ONE symbol every 15 seconds
+setInterval(safeFetchLoop, 15000);
+
+// ----------------------------------------------------
+// 🟣 START SERVER
+// ----------------------------------------------------
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
