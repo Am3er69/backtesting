@@ -17,7 +17,7 @@ app.get("/", (req, res) => {
 // 🟡 GENERATE SIGNALS ENDPOINT
 app.get("/signals", async (req, res) => {
     try {
-        const symbol = "XAU/USD";
+        const symbol = "OANDA:XAU_USD";  // 🔥 FIXED
         const timeframe = "1h";
         const limit = 200;
 
@@ -68,14 +68,14 @@ app.get("/signals", async (req, res) => {
 // 🔥 RATE-LIMIT SAFE FETCH SYSTEM
 // ----------------------------------------------------
 
-// List of symbols your backend rotates through
+// FINNHUB-COMPATIBLE SYMBOLS
 const symbols = [
-    "XAU/USD",
-    "EUR/USD",
-    "GBP/USD",
-    "USD/JPY",
-    "BTC/USD",
-    "ETH/USD"
+    "OANDA:XAU_USD",
+    "OANDA:EUR_USD",
+    "OANDA:GBP_USD",
+    "OANDA:USD_JPY",
+    "BINANCE:BTCUSDT",
+    "BINANCE:ETHUSDT"
 ];
 
 // Safely rotate symbols to stay inside API limits
